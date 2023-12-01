@@ -64,7 +64,7 @@ typedef struct {
     uint32_t                opt_enable_spoken_punctuation;
     uint32_t                opt_enable_spoken_emojis;
 } globals_t;
-
+extern globals_t globals;
 
 typedef struct {
     switch_memory_pool_t    *pool;

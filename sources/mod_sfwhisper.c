@@ -4,6 +4,7 @@
  * https://github.com/akscf/
  **/
 #include "mod_sfwhisper.h"
+#include "whisper_api.h"
 
 globals_t globals;
 
@@ -22,15 +23,10 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
     volatile gasr_ctx_t *_ref = (gasr_ctx_t *) obj;
     gasr_ctx_t *asr_ctx = (gasr_ctx_t *) _ref;
     switch_status_t status;
-    switch_byte_t *base64_buffer = NULL;
-    switch_byte_t *curl_send_buffer = NULL;
     switch_buffer_t *chunk_buffer = NULL;
-    switch_buffer_t *curl_recv_buffer = NULL;
     switch_memory_pool_t *pool = NULL;
-    cJSON *json = NULL;
-    uint32_t base64_buffer_size = 0, chunk_buffer_size = 0, recv_len = 0;
+    uint32_t chunk_buffer_size = 0, recv_len = 0;
     uint8_t fl_do_transcript = false;
-    const void *curl_recv_buffer_ptr = NULL;
     void *pop = NULL;
 
     switch_mutex_lock(asr_ctx->mutex);
@@ -39,10 +35,6 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
 
     if(switch_core_new_memory_pool(&pool) != SWITCH_STATUS_SUCCESS) {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "pool fail\n");
-        goto out;
-    }
-    if(switch_buffer_create_dynamic(&curl_recv_buffer, 1024, 4096, 16384) != SWITCH_STATUS_SUCCESS) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "mem fail\n");
         goto out;
     }
 
@@ -89,82 +81,26 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
         if(fl_do_transcript) {
             const void *chunk_buffer_ptr = NULL;
             uint32_t buf_len = switch_buffer_peek_zerocopy(chunk_buffer, &chunk_buffer_ptr);
-            uint32_t b64_len = BASE64_ENC_SZ(buf_len) + 1;
-
-            if(base64_buffer_size == 0 || base64_buffer_size < b64_len) {
-                if(base64_buffer_size > 0) { switch_safe_free(base64_buffer); }
-                switch_zmalloc(base64_buffer, b64_len);
-                base64_buffer_size = b64_len;
-            } else {
-                memset(base64_buffer, 0x0, b64_len);
-            }
-
-            if(switch_b64_encode((uint8_t *)chunk_buffer_ptr, buf_len, base64_buffer, base64_buffer_size) == SWITCH_STATUS_SUCCESS) {
-                curl_send_buffer = (char*) switch_mprintf(
-                                "{'config':{" \
-                                "'languageCode':'%s', 'encoding':'%s', 'sampleRateHertz':'%u', 'audioChannelCount':'%u', 'maxAlternatives':'%u', 'profanityFilter':'%s', 'enableWordTimeOffsets':'%s', 'enableWordConfidence':'%s', " \
-                                "'enableAutomaticPunctuation':'%s', 'enableSpokenPunctuation':'%s', 'enableSpokenEmojis':'%s', 'model':'%s', 'useEnhanced':'%s', " \
-                                "'diarizationConfig':{'enableSpeakerDiarization': '%s', 'minSpeakerCount': '%u', 'maxSpeakerCount': '%u'}, " \
-                                "'metadata':{'interactionType':'%s', 'microphoneDistance':'%s', 'recordingDeviceType':'%s'}" \
-                                "}, 'audio':{'content':'%s'}}",
-                                asr_ctx->lang, asr_ctx->opt_encoding, asr_ctx->samplerate, asr_ctx->channels,
-                                asr_ctx->opt_max_alternatives,
-                                BOOL2STR(asr_ctx->opt_enable_profanity_filter), BOOL2STR(asr_ctx->opt_enable_word_time_offsets), BOOL2STR(asr_ctx->opt_enable_word_confidence), BOOL2STR(asr_ctx->opt_enable_automatic_punctuation),
-                                BOOL2STR(asr_ctx->opt_enable_spoken_punctuation), BOOL2STR(asr_ctx->opt_enable_spoken_emojis), asr_ctx->opt_speech_model, BOOL2STR(asr_ctx->opt_use_enhanced_model),
-                                BOOL2STR(asr_ctx->opt_enable_speaker_diarization), asr_ctx->opt_diarization_min_speaker_count, asr_ctx->opt_diarization_max_speaker_count,
-                                asr_ctx->opt_meta_interaction_type, asr_ctx->opt_meta_microphone_distance, asr_ctx->opt_meta_recording_device_type,
-                                base64_buffer );
-
-                asr_ctx->curl_send_buffer_ref = curl_send_buffer;
-                asr_ctx->curl_send_buffer_len = strlen((const char *)curl_send_buffer);
-
-                switch_buffer_zero(curl_recv_buffer);
-                asr_ctx->curl_recv_buffer_ref = curl_recv_buffer;
-
-                status = curl_perform(asr_ctx);
-                recv_len = switch_buffer_peek_zerocopy(curl_recv_buffer, &curl_recv_buffer_ptr);
-
+            char *fname=audio_file_write((switch_byte_t *)chunk_buffer_ptr, buf_len, asr_ctx->channels, asr_ctx->samplerate);
+            if(fname != NULL) {
+                char *result = NULL;
+                status = whisper_transcribe(asr_ctx, fname, result);
                 if(status == SWITCH_STATUS_SUCCESS) {
-                    if((json = cJSON_Parse((char *) curl_recv_buffer_ptr)) != NULL) {
-                        cJSON *jres = cJSON_GetObjectItem(json, "results");
-                        if(jres && cJSON_GetArraySize(jres) > 0) {
-                            cJSON *jelem = cJSON_GetArrayItem(jres, 0);
-                            if(jelem) {
-                                jres = cJSON_GetObjectItem(jelem, "alternatives");
-                                if(jres && cJSON_GetArraySize(jres) > 0) {
-                                    jelem = cJSON_GetArrayItem(jres, 0);
-                                    if(jelem) {
-                                        cJSON *jt = cJSON_GetObjectItem(jelem, "transcript"); // jt->valuestring
-                                        cJSON *jc = cJSON_GetObjectItem(jelem, "confidence"); // jc->valuedouble
-                                        if(jt && jt->valuestring) {
-                                            xdata_buffer_t *tbuff = NULL;
-                                            if(xdata_buffer_alloc(&tbuff, jt->valuestring, strlen(jt->valuestring)) == SWITCH_STATUS_SUCCESS) {
-                                                if(switch_queue_trypush(asr_ctx->q_text, tbuff) == SWITCH_STATUS_SUCCESS) {
-                                                    switch_mutex_lock(asr_ctx->mutex);
-                                                    asr_ctx->transcript_results++;
-                                                    switch_mutex_unlock(asr_ctx->mutex);
-                                                } else {
-                                                    xdata_buffer_free(&tbuff);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    xdata_buffer_t *tbuff = NULL;
+                    if(result && xdata_buffer_alloc(&tbuff, result, strlen(result)) == SWITCH_STATUS_SUCCESS) {
+                        if(switch_queue_trypush(asr_ctx->q_text, tbuff) == SWITCH_STATUS_SUCCESS) {
+                            switch_mutex_lock(asr_ctx->mutex);
+                            asr_ctx->transcript_results++;
+                            switch_mutex_unlock(asr_ctx->mutex);
+                        }else{
+                            xdata_buffer_free(&tbuff);
                         }
-                    }
-                    if(json) {
-                        cJSON_Delete(json);
-                        json = NULL;
+                        switch_safe_free(result);
                     }
                 } else {
-                    if(recv_len > 0) {
-                        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "GCP-RESPONSE: %s\n", (char *) curl_recv_buffer_ptr);
-                    }
+                    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Whisper API error\n");
                 }
-                switch_safe_free(curl_send_buffer);
-            } else {
-                switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "b64_encode fail\n");
+                switch_safe_free(fname);
             }
             switch_buffer_zero(chunk_buffer);
         }
@@ -173,15 +109,6 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
     }
 
 out:
-    switch_safe_free(base64_buffer);
-    switch_safe_free(curl_send_buffer);
-
-    if(json != NULL) {
-        cJSON_Delete(json);
-    }
-    if(curl_recv_buffer) {
-        switch_buffer_destroy(&curl_recv_buffer);
-    }
     if(chunk_buffer) {
         switch_buffer_destroy(&chunk_buffer);
     }
