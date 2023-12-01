@@ -3,7 +3,7 @@
  * https://akscf.me/
  * https://github.com/akscf/
  **/
-#include "mod_google_asr.h"
+#include "mod_sfwhisper.h"
 
 extern globals_t globals;
 

@@ -3,8 +3,8 @@
  * https://akscf.me/
  * https://github.com/akscf/
  **/
-#ifndef MOD_GOOGLE_ASR_H
-#define MOD_GOOGLE_ASR_H
+#ifndef MOD_SFWHISPER_H
+#define MOD_SFWHISPER_H
 
 #include <switch.h>
 #include <switch_stun.h>

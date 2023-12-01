@@ -1,6 +1,6 @@
-<configuration name="google_asr.conf" description="">
+<configuration name="sfwhisper.conf" description="">
   <settings>
-    <param name="api-url" value="https://speech.googleapis.com/v1/speech:recognize?key=${api-key}" />
+    <param name="api-url" value="https://api.openai.com/v1/audio/transcriptions" />
     <param name="api-key" value="---YOUR-API-KEY---" />
 <!-- <param name="proxy" value="http://proxy:port" /> -->
 <!-- <param name="proxy-credentials" value="" /> -->

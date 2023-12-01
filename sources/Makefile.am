@@ -1,12 +1,12 @@
 
 include $(top_srcdir)/build/modmake.rulesam
 
-MODNAME=mod_google_asr
-mod_LTLIBRARIES = mod_google_asr.la
-mod_google_asr_la_SOURCES  = mod_google_asr.c utils.c curl.c
-mod_google_asr_la_CFLAGS   = $(AM_CFLAGS) -I. -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable -Wno-unused-label -Wno-declaration-after-statement -Wno-pointer-sign
-mod_google_asr_la_LIBADD   = $(switch_builddir)/libfreeswitch.la
-mod_google_asr_la_LDFLAGS  = -avoid-version -module -no-undefined -shared
+MODNAME=mod_sfwhisper
+mod_LTLIBRARIES = mod_sfwhisper.la
+mod_sfwhisper_la_SOURCES  = mod_sfwhisper.c utils.c curl.c
+mod_sfwhisper_la_CFLAGS   = $(AM_CFLAGS) -I. -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable -Wno-unused-label -Wno-declaration-after-statement -Wno-pointer-sign
+mod_sfwhisper_la_LIBADD   = $(switch_builddir)/libfreeswitch.la
+mod_sfwhisper_la_LDFLAGS  = -avoid-version -module -no-undefined -shared
 
-$(am_mod_google_asr_la_OBJECTS): mod_google_asr.h
+$(am_mod_sfwhisper_la_OBJECTS): mod_sfwhisper.h
 

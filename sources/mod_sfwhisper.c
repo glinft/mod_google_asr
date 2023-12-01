@@ -3,13 +3,13 @@
  * https://akscf.me/
  * https://github.com/akscf/
  **/
-#include "mod_google_asr.h"
+#include "mod_sfwhisper.h"
 
 globals_t globals;
 
-SWITCH_MODULE_LOAD_FUNCTION(mod_google_asr_load);
-SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_google_asr_shutdown);
-SWITCH_MODULE_DEFINITION(mod_google_asr, mod_google_asr_load, mod_google_asr_shutdown, NULL);
+SWITCH_MODULE_LOAD_FUNCTION(mod_sfwhisper_load);
+SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_sfwhisper_shutdown);
+SWITCH_MODULE_DEFINITION(mod_sfwhisper, mod_sfwhisper_load, mod_sfwhisper_shutdown, NULL);
 
 /**
  ** https://cloud.google.com/speech-to-text/docs/sync-recognize#speech-sync-recognize-drest
@@ -519,8 +519,8 @@ static switch_status_t asr_unload_grammar(switch_asr_handle_t *ah, const char *n
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------------------------------------------------------------------------
-#define CONFIG_NAME "google_asr.conf"
-SWITCH_MODULE_LOAD_FUNCTION(mod_google_asr_load) {
+#define CONFIG_NAME "sfwhisper.conf"
+SWITCH_MODULE_LOAD_FUNCTION(mod_sfwhisper_load) {
     switch_status_t status = SWITCH_STATUS_SUCCESS;
     switch_xml_t cfg, xml, settings, param;
     switch_asr_interface_t *asr_interface;
@@ -623,7 +623,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_google_asr_load) {
     *module_interface = switch_loadable_module_create_module_interface(pool, modname);
 
     asr_interface = switch_loadable_module_create_interface(*module_interface, SWITCH_ASR_INTERFACE);
-    asr_interface->interface_name = "google";
+    asr_interface->interface_name = "sfwhisper";
     asr_interface->asr_open = asr_open;
     asr_interface->asr_close = asr_close;
     asr_interface->asr_feed = asr_feed;
@@ -638,7 +638,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_google_asr_load) {
     asr_interface->asr_load_grammar = asr_load_grammar;
     asr_interface->asr_unload_grammar = asr_unload_grammar;
 
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "GoogleASR-%s\n", VERSION);
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "SfWhisper-%s\n", VERSION);
 out:
     if(xml) {
         switch_xml_free(xml);
@@ -646,7 +646,7 @@ out:
     return status;
 }
 
-SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_google_asr_shutdown) {
+SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_sfwhisper_shutdown) {
     uint8_t fl_wloop = true;
 
     globals.fl_shutdown = true;
