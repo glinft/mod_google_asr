@@ -202,3 +202,9 @@ out:
     switch_safe_free(file_name);
 }
 
+void audio_file_delete(const char *file_name){
+    if(file_name) {
+        unlink(file_name);
+    }
+    return;
+}

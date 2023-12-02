@@ -23,7 +23,7 @@
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
-#define VERSION             "1.0 (gcp-asr-api-v1_http)"
+#define VERSION             "1.0 (openai-whisper-v1)"
 #define QUEUE_SIZE          64
 #define VAD_STORE_FRAMES    32
 #define VAD_RECOVERY_FRAMES 10
@@ -126,6 +126,7 @@ void xdata_buffer_queue_clean(switch_queue_t *queue);
 
 char *audio_file_write(switch_byte_t *buf, uint32_t buf_len, uint32_t channels, uint32_t samplerate);
 void data_file_write(switch_byte_t *buf, uint32_t buf_len);
+void audio_file_delete(const char *file_name);
 
 char *gcp_get_language(const char *val);
 char *gcp_get_encoding(const char *val);

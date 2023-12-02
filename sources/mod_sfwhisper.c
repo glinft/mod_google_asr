@@ -84,10 +84,10 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
             char *fname=audio_file_write((switch_byte_t *)chunk_buffer_ptr, buf_len, asr_ctx->channels, asr_ctx->samplerate);
             if(fname != NULL) {
                 char *result = NULL;
-                status = whisper_transcribe(asr_ctx, fname, result);
-                if(status == SWITCH_STATUS_SUCCESS) {
+                status = whisper_transcribe(asr_ctx, fname, &result);
+                if(status == SWITCH_STATUS_SUCCESS && result) {
                     xdata_buffer_t *tbuff = NULL;
-                    if(result && xdata_buffer_alloc(&tbuff, result, strlen(result)) == SWITCH_STATUS_SUCCESS) {
+                    if(xdata_buffer_alloc(&tbuff, result, strlen(result)) == SWITCH_STATUS_SUCCESS) {
                         if(switch_queue_trypush(asr_ctx->q_text, tbuff) == SWITCH_STATUS_SUCCESS) {
                             switch_mutex_lock(asr_ctx->mutex);
                             asr_ctx->transcript_results++;
@@ -100,6 +100,7 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
                 } else {
                     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Whisper API error\n");
                 }
+                audio_file_delete(fname);
                 switch_safe_free(fname);
             }
             switch_buffer_zero(chunk_buffer);
