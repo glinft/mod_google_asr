@@ -79,13 +79,18 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
         }
 
         if(fl_do_transcript) {
+            //if(asr_ctx->session) switch_ivr_play_file(asr_ctx->session, NULL, "tone_stream://%(200,0,500,600,700)", NULL);
+            asr_ctx->fl_pause = true; // 24/1/9
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Whisper API: chunk\n");
             const void *chunk_buffer_ptr = NULL;
             uint32_t buf_len = switch_buffer_peek_zerocopy(chunk_buffer, &chunk_buffer_ptr);
             char *fname=audio_file_write((switch_byte_t *)chunk_buffer_ptr, buf_len, asr_ctx->channels, asr_ctx->samplerate);
             if(fname != NULL) {
+                switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Whisper API: invoke (%s)\n", asr_ctx->lang);
                 char *result = NULL;
                 status = whisper_transcribe(asr_ctx, fname, &result);
                 if(status == SWITCH_STATUS_SUCCESS && result) {
+                    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Whisper API: done\n");
                     xdata_buffer_t *tbuff = NULL;
                     if(xdata_buffer_alloc(&tbuff, result, strlen(result)) == SWITCH_STATUS_SUCCESS) {
                         if(switch_queue_trypush(asr_ctx->q_text, tbuff) == SWITCH_STATUS_SUCCESS) {
@@ -98,7 +103,7 @@ static void *SWITCH_THREAD_FUNC transcript_thread(switch_thread_t *thread, void 
                         switch_safe_free(result);
                     }
                 } else {
-                    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Whisper API error\n");
+                    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Whisper API: error\n");
                 }
                 audio_file_delete(fname);
                 switch_safe_free(fname);
@@ -142,6 +147,7 @@ static switch_status_t asr_open(switch_asr_handle_t *ah, const char *codec, int 
         switch_goto_status(SWITCH_STATUS_GENERR, out);
     }
 
+    asr_ctx->session = switch_core_memory_pool_get_data(ah->memory_pool, "__session");
     asr_ctx->chunk_buffer_size = 0;
     asr_ctx->samplerate = samplerate;
     asr_ctx->channels = 1;
@@ -161,6 +167,9 @@ static switch_status_t asr_open(switch_asr_handle_t *ah, const char *codec, int 
     asr_ctx->opt_enable_speaker_diarization = false;
     asr_ctx->opt_diarization_min_speaker_count = 1;
     asr_ctx->opt_diarization_max_speaker_count = 1;
+    asr_ctx->start_input_timers = globals.start_input_timers;
+    asr_ctx->no_input_timeout = globals.no_input_timeout;
+    asr_ctx->silence_time = 0;
 
    if((status = switch_mutex_init(&asr_ctx->mutex, SWITCH_MUTEX_NESTED, ah->memory_pool)) != SWITCH_STATUS_SUCCESS) {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "mem fail\n");
@@ -208,7 +217,7 @@ static switch_status_t asr_close(switch_asr_handle_t *ah, switch_asr_flag_t *fla
     switch_mutex_unlock(asr_ctx->mutex);
 
     if(fl_wloop) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Waiting for unlock (deps=%u)!\n", asr_ctx->deps);
+        //switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Waiting for unlock (deps=%u)!\n", asr_ctx->deps);
         while(fl_wloop) {
             switch_mutex_lock(asr_ctx->mutex);
             fl_wloop = (asr_ctx->deps != 0);
@@ -236,8 +245,9 @@ static switch_status_t asr_close(switch_asr_handle_t *ah, switch_asr_flag_t *fla
 
 static switch_status_t asr_feed(switch_asr_handle_t *ah, void *data, unsigned int data_len, switch_asr_flag_t *flags) {
     gasr_ctx_t *asr_ctx = (gasr_ctx_t *) ah->private_info;
-    switch_vad_state_t vad_state = 0;
+    switch_vad_state_t vad_state = SWITCH_VAD_STATE_NONE;
     uint8_t fl_has_audio = false;
+    uint32_t recover_len = 0;
 
     assert(asr_ctx != NULL);
 
@@ -269,24 +279,45 @@ static switch_status_t asr_feed(switch_asr_handle_t *ah, void *data, unsigned in
     }
 
     if(asr_ctx->fl_vad_enabled && asr_ctx->vad_buffer_size) {
-        if(asr_ctx->vad_state == SWITCH_VAD_STATE_STOP_TALKING || (asr_ctx->vad_state == vad_state && vad_state == SWITCH_VAD_STATE_NONE)) {
-            if(asr_ctx->frame_len >= data_len) {
-                if(asr_ctx->vad_buffer_offs >= asr_ctx->vad_buffer_size) { asr_ctx->vad_buffer_offs = 0; asr_ctx->vad_stored_frames = 0; }
-                memcpy((void *)(asr_ctx->vad_buffer + asr_ctx->vad_buffer_offs), data, MIN(asr_ctx->frame_len, data_len));
-                asr_ctx->vad_buffer_offs += asr_ctx->frame_len;
-                asr_ctx->vad_stored_frames++;
+        if(asr_ctx->vad_state == SWITCH_VAD_STATE_NONE || asr_ctx->vad_state == SWITCH_VAD_STATE_STOP_TALKING) {
+            //if(asr_ctx->frame_len >= data_len) { }
+            if(asr_ctx->vad_buffer_offs >= asr_ctx->vad_buffer_size) {
+                recover_len = asr_ctx->vad_buffer_size / 2;
+                memcpy((void *)(asr_ctx->vad_buffer), (void *)(asr_ctx->vad_buffer + recover_len), recover_len);
+                memset((void *)(asr_ctx->vad_buffer + recover_len), 0, recover_len);
+                asr_ctx->vad_buffer_offs = recover_len;
+                asr_ctx->vad_stored_frames = VAD_STORE_FRAMES / 2;
             }
+            memcpy((void *)(asr_ctx->vad_buffer + asr_ctx->vad_buffer_offs), data, MIN(asr_ctx->frame_len, data_len));
+            asr_ctx->vad_buffer_offs += asr_ctx->frame_len;
+            asr_ctx->vad_stored_frames++;
         }
 
         vad_state = switch_vad_process(asr_ctx->vad, (int16_t *)data, (data_len / sizeof(int16_t)));
+#if 1
+        if(asr_ctx->start_input_timers) {
+            if(vad_state == SWITCH_VAD_STATE_NONE && asr_ctx->silence_time > 0) {
+                switch_time_t elapsed_ms = (switch_micro_time_now() - asr_ctx->silence_time) / 1000;
+                if(asr_ctx->no_input_timeout > 0 && elapsed_ms >= asr_ctx->no_input_timeout) {
+                    return SWITCH_STATUS_BREAK;
+                }
+            }
+        }
+#endif
         if(vad_state == SWITCH_VAD_STATE_START_TALKING) {
+#if 1
+            if(asr_ctx->session) {
+                switch_channel_t *channel = switch_core_session_get_channel(asr_ctx->session);
+                switch_channel_set_flag(channel, CF_BREAK);
+            }
+#endif
             asr_ctx->vad_state = vad_state;
             fl_has_audio = true;
-        } else if (vad_state == SWITCH_VAD_STATE_STOP_TALKING) {
+        } else if(vad_state == SWITCH_VAD_STATE_STOP_TALKING) {
             asr_ctx->vad_state = vad_state;
             fl_has_audio = false;
             switch_vad_reset(asr_ctx->vad);
-        } else if (vad_state == SWITCH_VAD_STATE_TALKING) {
+        } else if(vad_state == SWITCH_VAD_STATE_TALKING) {
             asr_ctx->vad_state = vad_state;
             fl_has_audio = true;
         }
@@ -301,16 +332,16 @@ static switch_status_t asr_feed(switch_asr_handle_t *ah, void *data, unsigned in
 
             if(asr_ctx->vad_stored_frames >= VAD_RECOVERY_FRAMES) { asr_ctx->vad_stored_frames = VAD_RECOVERY_FRAMES; }
 
-            asr_ctx->vad_buffer_offs -= (asr_ctx->vad_stored_frames * asr_ctx->frame_len);
+            recover_len = (asr_ctx->vad_stored_frames * asr_ctx->frame_len);
+            asr_ctx->vad_buffer_offs -= recover_len;
             if(asr_ctx->vad_buffer_offs < 0 ) { asr_ctx->vad_buffer_offs = 0; }
 
-            tdata_len = (asr_ctx->vad_stored_frames * asr_ctx->frame_len) + data_len;
-
+            tdata_len = recover_len + data_len;
             switch_zmalloc(tau_buf, sizeof(xdata_buffer_t));
             switch_malloc(tau_buf->data, tdata_len);
             tau_buf->len = tdata_len;
 
-            tdata_len = (asr_ctx->vad_stored_frames * asr_ctx->frame_len);
+            tdata_len = recover_len;
             memcpy(tau_buf->data, asr_ctx->vad_buffer + asr_ctx->vad_buffer_offs, tdata_len);
             memcpy(tau_buf->data + tdata_len, data, data_len);
 
@@ -363,6 +394,8 @@ static switch_status_t asr_start_input_timers(switch_asr_handle_t *ah) {
     gasr_ctx_t *asr_ctx = (gasr_ctx_t *) ah->private_info;
     assert(asr_ctx != NULL);
 
+    asr_ctx->silence_time = switch_micro_time_now();
+
     return SWITCH_STATUS_SUCCESS;
 }
 
@@ -383,6 +416,9 @@ static switch_status_t asr_resume(switch_asr_handle_t *ah) {
 
     if(asr_ctx->fl_pause) {
         asr_ctx->fl_pause = false;
+        if(asr_ctx->silence_time > 0) {
+            asr_ctx->silence_time = switch_micro_time_now();
+        }
     }
 
     return SWITCH_STATUS_SUCCESS;
@@ -395,7 +431,7 @@ static void asr_text_param(switch_asr_handle_t *ah, char *param, const char *val
     if(strcasecmp(param, "vad") == 0) {
         if(val) asr_ctx->fl_vad_enabled = switch_true(val);
     } else if(strcasecmp(param, "lang") == 0) {
-        if(val) asr_ctx->lang = switch_core_strdup(ah->memory_pool, gcp_get_language(val));
+        if(val) asr_ctx->lang = switch_core_strdup(ah->memory_pool, val);
     } else if(!strcasecmp(param, "speech-model")) {
         if(val) asr_ctx->opt_speech_model = switch_core_strdup(ah->memory_pool, val);
     } else if(!strcasecmp(param, "use-enhanced-model")) {
@@ -426,6 +462,12 @@ static void asr_text_param(switch_asr_handle_t *ah, char *param, const char *val
         if(val) asr_ctx->opt_diarization_min_speaker_count = atoi(val);
     } else if(!strcasecmp(param, "diarization-max-speakers")) {
         if(val) asr_ctx->opt_diarization_max_speaker_count = atoi(val);
+    } else if(!strcasecmp(param, "start-input-timers")) {
+        if(val) asr_ctx->start_input_timers = switch_true(val);
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "start-input-timers = %d\n", asr_ctx->start_input_timers);
+    } else if(!strcasecmp(param, "no-input-timeout")) {
+        if(val && switch_is_number(val)) asr_ctx->no_input_timeout = atoi(val);
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "no-input-timeout = %d\n", asr_ctx->no_input_timeout);
     }
 
 }
@@ -454,6 +496,8 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_sfwhisper_load) {
     switch_asr_interface_t *asr_interface;
 
     memset(&globals, 0, sizeof(globals));
+    globals.start_input_timers = SWITCH_FALSE;
+    globals.no_input_timeout = 5000;
 
     switch_mutex_init(&globals.mutex, SWITCH_MUTEX_NESTED, pool);
 
@@ -488,7 +532,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_sfwhisper_load) {
             } else if(!strcasecmp(var, "proxy-credentials")) {
                 if(val) globals.proxy_credentials = switch_core_strdup(pool, val);
             } else if(!strcasecmp(var, "default-language")) {
-                if(val) globals.default_lang = switch_core_strdup(pool, gcp_get_language(val));
+                if(val) globals.default_lang = switch_core_strdup(pool, val);
             } else if(!strcasecmp(var, "encoding")) {
                 if(val) globals.opt_encoding = switch_core_strdup(pool, gcp_get_encoding(val));
             } else if(!strcasecmp(var, "chunk-size-sec")) {
@@ -521,6 +565,10 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_sfwhisper_load) {
                 if(val) globals.opt_meta_recording_device_type = switch_core_strdup(pool, gcp_get_recording_device(val));
             } else if(!strcasecmp(var, "interaction-type")) {
                 if(val) globals.opt_meta_interaction_type = switch_core_strdup(pool, gcp_get_interaction(val));
+            } else if(!strcasecmp(var, "start-input-timers")) {
+                if(val) globals.start_input_timers = switch_true(val);
+            } else if(!strcasecmp(var, "no-input-timeout")) {
+                if(val && switch_is_number(val)) globals.no_input_timeout = atoi(val);
             }
         }
     }

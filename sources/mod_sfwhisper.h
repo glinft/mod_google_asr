@@ -26,7 +26,7 @@
 #define VERSION             "1.0 (openai-whisper-v1)"
 #define QUEUE_SIZE          64
 #define VAD_STORE_FRAMES    32
-#define VAD_RECOVERY_FRAMES 10
+#define VAD_RECOVERY_FRAMES 20
 #define DEF_CHUNK_SZ_SEC    15
 #define BASE64_ENC_SZ(n)    (4*(n/3))
 #define BOOL2STR(v)         (v ? "true" : "false")
@@ -63,11 +63,15 @@ typedef struct {
     uint32_t                opt_enable_automatic_punctuation;
     uint32_t                opt_enable_spoken_punctuation;
     uint32_t                opt_enable_spoken_emojis;
+    //
+    switch_bool_t           start_input_timers;
+    int                     no_input_timeout;
 } globals_t;
 extern globals_t globals;
 
 typedef struct {
     switch_memory_pool_t    *pool;
+    switch_core_session_t   *session;
     switch_vad_t            *vad;
     switch_byte_t           *vad_buffer;
     switch_mutex_t          *mutex;
@@ -109,6 +113,10 @@ typedef struct {
     uint32_t                opt_enable_speaker_diarization;
     uint32_t                opt_diarization_min_speaker_count;
     uint32_t                opt_diarization_max_speaker_count;
+    //
+    switch_bool_t           start_input_timers;
+    int                     no_input_timeout;
+    switch_time_t           silence_time;
 } gasr_ctx_t;
 
 typedef struct {

@@ -11,7 +11,11 @@ switch_status_t whisper_transcribe(gasr_ctx_t *asr_ctx, const char *fname, char 
     //switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "token: %s\n", token.c_str());
     try{
         std::string audiofile=fname;
-        std::string jreq=R"({"file": ")"+audiofile+R"(", "model": "whisper-1"})";
+        std::string langcode=asr_ctx->lang;
+        std::string jreq=R"({"file": ")"+audiofile+R"(", "model": "whisper-1", "language": ")"+langcode+R"("})";
+        if(langcode=="zh"){
+            jreq=R"({"file": ")"+audiofile+R"(", "model": "whisper-1", "language": ")"+langcode+R"(", "prompt":"以下是普通话的句子，这是一段电话客服交谈记录，主要涉及产品售前咨询、售后服务等。"})";
+        }
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "audio: %s\n", jreq.c_str());
         auto jdoc=nlohmann::json::parse(jreq);
         auto transcription=openai::audio().transcribe(jdoc);
